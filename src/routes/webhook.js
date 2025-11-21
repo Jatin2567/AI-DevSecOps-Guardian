@@ -2,11 +2,14 @@
 const express = require('express');
 const router = express.Router();
 const crypto = require('crypto');
+const fs = require('fs');
+const path = require('path');
 
 const gitlabService = require('../services/gitlabService');
 const aiService = require('../services/aiService');
 const issueService = require('../services/issueService');
 const logParser = require('../utils/logParser');
+const detectorService = require('../services/detectorService'); // integration point (server-side deterministics)
 
 const WEBHOOK_SECRET = process.env.GITLAB_WEBHOOK_SECRET || '';
 // MONITORED_JOB_NAMES env: comma-separated list (e.g. "unit_tests,lint,ai_scan")
@@ -15,11 +18,16 @@ const MONITORED_JOB_NAMES = (process.env.MONITORED_JOB_NAMES || 'unit_tests,lint
   .map(s => s.trim())
   .filter(Boolean);
 
+const MONITORED_STAGES_NAMES = (process.env.MONITORED_STAGES || 'unit_tests,lint,ai_scan')
+  .split(',')
+  .map(s => s.trim())
+  .filter(Boolean);
 // whether to analyze successful jobs/pipelines (string '1' means enabled)
 const ENABLE_SUCCESS_PIPELINE_ANALYSIS = String(process.env.ENABLE_SUCCESS_PIPELINE_ANALYSIS || '0') === '1';
 
-// sample 1 in N successful runs (integer >=1). If 1 => analyze every success. If 10 => analyze ~10% of successes.
-const ANALYZE_SUCCESS_SAMPLING = Math.max(1, parseInt(process.env.ANALYZE_SUCCESS_SAMPLING || '1', 10));
+// sample 1 in N successful runs (integer >=0). If 0 => analyze no successes. If 1 => analyze every success.
+const rawSampling = process.env.ANALYZE_SUCCESS_SAMPLING;
+const ANALYZE_SUCCESS_SAMPLING = rawSampling === undefined ? 1 : Math.max(0, parseInt(rawSampling || '0', 10));
 
 /** Validate incoming webhook token using timingSafeEqual */
 function validWebhookToken(incoming) {
@@ -38,6 +46,8 @@ function validWebhookToken(incoming) {
 /** Decide whether to analyze a successful event based on sampling config */
 function shouldSampleSuccess() {
   if (!ENABLE_SUCCESS_PIPELINE_ANALYSIS) return false; // global off
+  // If sampling explicitly set to 0, treat it as "no successes sampled"
+  if (ANALYZE_SUCCESS_SAMPLING === 0) return false;
   if (ANALYZE_SUCCESS_SAMPLING <= 1) return true; // analyze every successful job
   // random sampling: approximate 1 in N
   return (Math.floor(Math.random() * ANALYZE_SUCCESS_SAMPLING) === 0);
@@ -47,6 +57,218 @@ function shouldSampleSuccess() {
 function canonicalJobName(job) {
   // job may have different fields depending on event type
   return job && (job.name || job.build_name || job.stage || job.job_name) ? (job.name || job.build_name || job.stage || job.job_name) : '';
+}
+
+/** Ensure debug directory exists and write raw webhook payload */
+function writeRawWebhookPayload(event) {
+  try {
+    const debugDir = path.join(process.cwd(), 'debug');
+    fs.mkdirSync(debugDir, { recursive: true });
+    const raw = JSON.stringify(event, null, 2);
+    const hash = crypto.createHash('sha256').update(raw).digest('hex');
+    const filename = path.join(debugDir, `webhook-${hash}.json`);
+    // write file if not exists (avoid overwriting)
+    if (!fs.existsSync(filename)) {
+      fs.writeFileSync(filename, raw, { encoding: 'utf8' });
+    }
+    return { path: filename, hash };
+  } catch (e) {
+    console.warn('Failed to write debug webhook payload:', e && e.message ? e.message : String(e));
+    return { path: null, hash: null };
+  }
+}
+
+/** Helper: extract canonical ids from event */
+function extractIds(event) {
+  const project = event.project || (event.project_id ? { id: event.project_id } : null);
+  const projectId = project && project.id;
+  const pipelineId = (event.pipeline && event.pipeline.id) || (event.object_attributes && event.object_attributes.id) || (event.build && event.build.pipeline && event.build.pipeline.id) || event.pipeline_id || null;
+  // job object may be under many keys depending on event type
+  const job = event.build || event.job || event;
+  const jobId = job && (job.id || job.build_id || event.build_id || job.job_id || null);
+  const commitSha = event.checkout_sha || (event.commit && (event.commit.id || event.commit.sha)) || null;
+  return { projectId, pipelineId, jobId, job, commitSha };
+}
+
+/** Analyze a single job (used by job event flow and pipeline loops) */
+async function analyzeSingleJob(eventContext) {
+  const { event, projectId, pipelineId, job, jobName, commitSha } = eventContext;
+
+  // Use event.build_id first when calling getJobTrace to preserve existing semantics
+  const buildIdParam = event && (event.build_id || null);
+  const jobIdFallback = job && (job.id || job.build_id || job.job_id || null);
+
+  if (!projectId) {
+    console.warn(JSON.stringify({ level: 'warn', msg: 'webhook.missing_project', event_summary: event && event.object_kind ? event.object_kind : 'unknown' }));
+    return { status: 'ignored', reason: 'missing_project' };
+  }
+
+  // If both are missing, persist raw payload and bail out
+  if (!buildIdParam && !jobIdFallback) {
+    const { path: rawPath, hash: rawHash } = writeRawWebhookPayload(event);
+    console.warn(JSON.stringify({ level: 'warn', msg: 'webhook.missing_job_id', projectId, pipelineId, raw_payload_hash: rawHash, raw_path: rawPath }));
+    return { status: 'ignored', reason: 'missing_job_id', debug: { raw_payload_hash: rawHash, raw_path: rawPath } };
+  }
+
+  // Fetch job trace/logs — preserve build_id first per your existing flow
+  let logs = '';
+  try {
+    // IMPORTANT: use event.build_id (buildIdParam) first, then fallback to jobIdFallback to remain compatible
+    const traceJobId = buildIdParam || jobIdFallback;
+    logs = await gitlabService.getJobTrace(projectId, traceJobId);
+  } catch (err) {
+    const { path: rawPath, hash: rawHash } = writeRawWebhookPayload(event);
+    console.error(JSON.stringify({ level: 'error', msg: 'trace.fetch_failed', projectId, jobId: (event && event.build_id) || (job && job.id) || null, error: err && err.message ? err.message : String(err), raw_payload_hash: rawHash, raw_path: rawPath }));
+    // fail-safe: respond with diagnostic; don't retry webhook infinitely
+    return { status: 'failed', reason: 'failed_to_fetch_trace', error: err && err.message ? err.message : String(err), debug: { raw_payload_path: rawPath } };
+  }
+
+  // Sanitize and take tail excerpt (last N lines)
+  const safeLog = logParser.sanitize(logs);
+  const lines = safeLog.split('\n');
+  const excerpt = lines.slice(-40).join('\n'); // last 40 lines for quick view
+  const traceTail = lines.slice(-1200).join('\n'); // larger tail for analysis
+
+  // compute trace hash and save run-level debug artifact
+  const runDebugDir = path.join(process.cwd(), 'debug');
+  try { fs.mkdirSync(runDebugDir, { recursive: true }); } catch (e) {}
+  const traceHash = crypto.createHash('sha256').update(traceTail).digest('hex');
+  const runDebugPath = path.join(runDebugDir, `run-${traceHash}.json`);
+  try {
+    const snapshot = {
+      meta: { projectId, pipelineId, jobId: (event && event.build_id) || (job && job.id) || null, jobName, commitSha, traceHash },
+      trace_tail: traceTail.slice(-10000) // keep limited
+    };
+    if (!fs.existsSync(runDebugPath)) {
+      fs.writeFileSync(runDebugPath, JSON.stringify(snapshot, null, 2), 'utf8');
+    }
+  } catch (e) {
+    console.warn('Failed to write run debug file:', e && e.message ? e.message : String(e));
+  }
+
+  // Deterministic detection via detectorService (fetch files at commit, verify matches, detect deps)
+  let detectorResult = null;
+  try {
+    detectorResult = await detectorService.loadAndVerifyArtifacts({
+      projectId,
+      pipelineId,
+      jobId: (event && event.build_id) || (job && job.id) || null,
+      commitSha,
+      traceTail
+    });
+    // store part of detector result to run debug file for audit
+    try {
+      const existing = JSON.parse(fs.readFileSync(runDebugPath, 'utf8'));
+      existing.detector = { summary: { repoHits: (detectorResult.repoHits || []).length, dependencyHigh: (detectorResult.dependencyHigh || []).length } , details: detectorResult };
+      fs.writeFileSync(runDebugPath, JSON.stringify(existing, null, 2), 'utf8');
+    } catch (e) {
+      // ignore write errors
+    }
+  } catch (e) {
+    console.warn('Detector service failed:', e && e.message ? e.message : String(e));
+    detectorResult = { repoHits: [], dependencyHigh: [], dependencyOther: [], error: e && e.message ? e.message : String(e) };
+  }
+
+  // Deterministic findings: secrets/dependencies
+  if (Array.isArray(detectorResult.repoHits) && detectorResult.repoHits.some(h => h.verified)) {
+    const verifiedHits = detectorResult.repoHits.filter(h => h.verified);
+    const analysis = {
+      stage: jobName || job.name || job.stage || 'unknown',
+      root_cause: 'HARD_CODED_SECRET',
+      suggested_fix: 'Remove hardcoded secrets from repository, rotate affected credentials, and use a secrets manager. See attached artifact for verified occurrences.',
+      confidence: 0.99,
+      explain: `Detected ${verifiedHits.length} verified hardcoded secret(s) in repository files at commit ${commitSha || 'unknown'}.`
+    };
+    const issue = await issueService.createIssueFromAnalysis(projectId, {
+      pipelineId,
+      job,
+      analysis,
+      logExcerpt: excerpt,
+      commitSha
+    });
+    return { status: 'issue_created', reason: 'hardcoded_secret', issue };
+  }
+
+  if (Array.isArray(detectorResult.dependencyHigh) && detectorResult.dependencyHigh.length > 0) {
+    const highDeps = detectorResult.dependencyHigh;
+    const pkgList = highDeps.map(d => `${d.package}@${d.installed_version || 'unknown'}`).join(', ');
+    const analysis = {
+      stage: jobName || job.name || job.stage || 'unknown',
+      root_cause: 'DEPENDENCY_VULNERABILITY',
+      suggested_fix: `Upgrade affected packages: ${pkgList}. Refer to advisories included in detector findings.`,
+      confidence: 0.95,
+      explain: `Detected ${highDeps.length} high/critical dependency vulnerability(ies).`
+    };
+    const issue = await issueService.createIssueFromAnalysis(projectId, {
+      pipelineId,
+      job,
+      analysis,
+      logExcerpt: excerpt,
+      commitSha
+    });
+    return { status: 'issue_created', reason: 'dependency_high', issue };
+  }
+
+  // Enforce: Only call AI for failed jobs!
+  const jobStatus = (job && (job.status || job.state || '') || (event && (event.status || event.state || ''))).toLowerCase();
+  if (jobStatus === 'success') {
+    return { status: 'skipped', reason: 'success-no-deterministic-findings' };
+  }
+
+  // Double guard: Only failed jobs (not success, not any other case)
+  if (jobStatus !== 'failed' && jobStatus !== 'canceled' && jobStatus !== 'manual') {
+    // If job status can't be identified as failure, do not call AI
+    return { status: 'skipped', reason: `job-status-${jobStatus}-not-failure` };
+  }
+
+  // === ONLY HERE: AI called ===
+  console.log('[AI GUARD] Calling AI for failed job:', { projectId, pipelineId, jobId: (event && event.build_id) || (job && job.id) || null, jobStatus });
+  let analysis = null;
+  try {
+    analysis = await aiService.analyzeFailure({
+      projectId,
+      pipelineId,
+      jobId: (event && event.build_id) || (job && job.id) || null,
+      jobName: jobName || job.name,
+      logs: traceTail
+    });
+    // attach detector summary for audit
+    analysis._detectorSummary = {
+      repoHits: detectorResult.repoHits || [],
+      dependencyHigh: detectorResult.dependencyHigh || [],
+      dependencyOther: detectorResult.dependencyOther || []
+    };
+    // store AI result in debug run file
+    try {
+      const existing = JSON.parse(fs.readFileSync(runDebugPath, 'utf8'));
+      existing.ai = { analysis: analysis };
+      fs.writeFileSync(runDebugPath, JSON.stringify(existing, null, 2), 'utf8');
+    } catch (e) {}
+  } catch (err) {
+    console.error('AI analyze failure:', err && err.message ? err.message : String(err));
+    analysis = {
+      stage: jobName || job.name,
+      root_cause: 'AI_UNAVAILABLE',
+      suggested_fix: 'Manual triage required',
+      confidence: 0,
+      explain: err && err.message ? err.message : String(err)
+    };
+  }
+
+  // Create or append to issue (dedupe done inside service) — AI path
+  try {
+    const issue = await issueService.createIssueFromAnalysis(projectId, {
+      pipelineId,
+      job,
+      analysis,
+      logExcerpt: excerpt,
+      commitSha
+    });
+    return { status: 'issue_created_ai', issue, analysis };
+  } catch (err) {
+    console.error('Failed to create/append issue (AI path):', err && err.message ? err.message : String(err));
+    return { status: 'failed', reason: 'issue_creation_failed', error: err && err.message ? err.message : String(err) };
+  }
 }
 
 router.post('/', async (req, res) => {
@@ -75,7 +297,7 @@ router.post('/', async (req, res) => {
       // }
       const jobStage = job.stage || job.stage_name || job.build_stage || job.stageName || '';
       const isMonitoredByName = MONITORED_JOB_NAMES.length > 0 ? MONITORED_JOB_NAMES.includes(jobName) : false;
-      const isMonitoredByStage = MONITORED_STAGES.length > 0 ? MONITORED_STAGES.includes((jobStage || '').toString()) : false;
+      const isMonitoredByStage = MONITORED_STAGES_NAMES.length > 0 ? MONITORED_STAGES_NAMES.includes((jobStage || '').toString()) : false;
 
       if (!isMonitoredByName && !isMonitoredByStage) {
         return res.status(200).json({ ok: true, msg: 'job-not-monitored', job: jobName, stage: jobStage });
@@ -87,63 +309,13 @@ router.post('/', async (req, res) => {
         return res.status(200).json({ ok: true, msg: 'success-sampled-out', job: jobName });
       }
 
-      // Fetch job trace/logs
-      let logs = '';
-      try {
-        logs = await gitlabService.getJobTrace(projectId, job.id);
-      } catch (err) {
-        console.error('Failed to fetch job trace:', err.message);
-        // fail-safe: respond 200 so webhook is not retried infinitely; also create a triage alert if necessary
-        return res.status(200).json({ ok: false, msg: 'failed_to_fetch_trace', error: err.message });
-      }
+      // Extract canonical ids and analyze this job
+      const { projectId: pId, pipelineId, jobId, job: canonicalJob, commitSha } = extractIds(event);
+      const ctx = { event, projectId: pId || projectId, pipelineId, job: canonicalJob, jobName, commitSha };
+      const result = await analyzeSingleJob(ctx);
 
-      const safeLog = logParser.sanitize(logs);
-      const excerpt = safeLog.split('\n').slice(0, 40).join('\n'); // first 40 lines
-
-      // Call AI analyzer
-      let analysis;
-      try {
-        analysis = await aiService.analyzeFailure({
-          projectId,
-          pipelineId: event.pipeline ? event.pipeline.id : (event.build && event.build.pipeline ? event.build.pipeline : undefined),
-          jobId: job.id,
-          jobName: jobName,
-          logs: safeLog
-        });
-      } catch (err) {
-        console.error('AI analyze failure:', err.message);
-        analysis = {
-          stage: jobName,
-          root_cause: 'AI_UNAVAILABLE',
-          suggested_fix: 'Manual triage required',
-          confidence: 0,
-          explain: err.message
-        };
-      }
-
-      // Create or append to issue (dedupe done inside service)
-      try {
-        const commitSha = event.checkout_sha || (event.commit && (event.commit.id || event.commit.sha)) || '';
-        const issue = await issueService.createIssueFromAnalysis(projectId, {
-          pipelineId: event.pipeline ? event.pipeline.id : (job.pipeline && job.pipeline ? job.pipeline : undefined),
-          job,
-          analysis,
-          logExcerpt: excerpt,
-          commitSha
-        });
-        // log result for visibility
-        if (issue && issue.issue_iid) {
-          console.log('✓ Issue created/found:', issue.issue_iid);
-        } else if (issue && issue.existing) {
-          console.log('✓ Existing issue appended:', issue.issue_iid);
-        } else {
-          console.log('✓ Issue service returned:', issue);
-        }
-      } catch (err) {
-        console.error('Failed to create/append issue:', err.message);
-      }
-
-      return res.status(200).json({ ok: true, msg: 'job-analyzed', job: jobName });
+      // Respond 200 with a concise summary for webhook caller (do not expose sensitive info)
+      return res.status(200).json({ ok: true, msg: 'job-analyzed', job: jobName, result: { status: result.status, reason: result.reason } });
     }
 
     // --- PIPELINE event handling (legacy / aggregate) ---
@@ -158,39 +330,11 @@ router.post('/', async (req, res) => {
         const failedJobs = jobs.filter(j => j.status === 'failed' || j.status === 'canceled' || j.status === 'manual');
         for (const job of failedJobs) {
           try {
-            const logs = await gitlabService.getJobTrace(projectId, job.id);
-            const safeLog = logParser.sanitize(logs);
-            const excerpt = safeLog.split('\n').slice(0, 40).join('\n');
-
-            let analysis;
-            try {
-              analysis = await aiService.analyzeFailure({
-                projectId,
-                pipelineId,
-                jobId: job.id,
-                jobName: job.name,
-                logs: safeLog
-              });
-            } catch (err) {
-              console.error('AI analyze failure (pipeline failed branch):', err.message);
-              analysis = {
-                stage: job.name,
-                root_cause: 'AI_UNAVAILABLE',
-                suggested_fix: 'Manual triage required',
-                confidence: 0,
-                explain: err.message
-              };
-            }
-
-            await issueService.createIssueFromAnalysis(projectId, {
-              pipelineId,
-              job,
-              analysis,
-              logExcerpt: excerpt,
-              commitSha: event.checkout_sha || ''
-            });
+            const ctx = { event, projectId, pipelineId, job, jobName: job.name, commitSha: event.checkout_sha || '' };
+            // reuse the single-job analyzer
+            await analyzeSingleJob(ctx);
           } catch (err) {
-            console.error('Failed to analyze a failed job in pipeline:', err.message);
+            console.error('Failed to analyze a failed job in pipeline:', err && err.message ? err.message : String(err));
             // continue analyzing other failed jobs
           }
         }
@@ -203,39 +347,10 @@ router.post('/', async (req, res) => {
         const candidateJobs = jobs.filter(j => MONITORED_JOB_NAMES.includes(j.name));
         for (const job of candidateJobs) {
           try {
-            const logs = await gitlabService.getJobTrace(projectId, job.id);
-            const safeLog = logParser.sanitize(logs);
-            const excerpt = safeLog.split('\n').slice(0, 40).join('\n');
-
-            let analysis;
-            try {
-              analysis = await aiService.analyzeFailure({
-                projectId,
-                pipelineId,
-                jobId: job.id,
-                jobName: job.name,
-                logs: safeLog
-              });
-            } catch (err) {
-              console.error('AI analyze failure (pipeline success sampling):', err.message);
-              analysis = {
-                stage: job.name,
-                root_cause: 'AI_UNAVAILABLE',
-                suggested_fix: 'Manual triage required',
-                confidence: 0,
-                explain: err.message
-              };
-            }
-
-            await issueService.createIssueFromAnalysis(projectId, {
-              pipelineId,
-              job,
-              analysis,
-              logExcerpt: excerpt,
-              commitSha: event.checkout_sha || ''
-            });
+            const ctx = { event, projectId, pipelineId, job, jobName: job.name, commitSha: event.checkout_sha || '' };
+            await analyzeSingleJob(ctx);
           } catch (err) {
-            console.error('Failed to analyze a job (pipeline success sampling):', err.message);
+            console.error('Failed to analyze a job (pipeline success sampling):', err && err.message ? err.message : String(err));
             // continue with others
           }
         }
