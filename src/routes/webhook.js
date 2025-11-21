@@ -86,7 +86,7 @@ function extractIds(event) {
   // job object may be under many keys depending on event type
   const job = event.build || event.job || event;
   const jobId = job && (job.id || job.build_id || event.build_id || job.job_id || null);
-  const commitSha = event.checkout_sha || (event.commit && (event.commit.id || event.commit.sha)) || null;
+  const commitSha = event.commit.sha || null;
   return { projectId, pipelineId, jobId, job, commitSha };
 }
 
