@@ -124,29 +124,29 @@ async function searchOpenIssues(projectId, search) {
  * Fetch a repository file **at a specific commit**.
  *
  * Raw content is returned as string.
- */
-async function getFileAtCommit(projectId, filePath, commitSha) {
-  if (!filePath || !commitSha) return null;
+//  */
+// async function getFileAtCommit(projectId, filePath, commitSha) {
+//   if (!filePath || !commitSha) return null;
 
-  const url =
-    `${GITLAB_API}/projects/${encodeURIComponent(projectId)}/repository/files/${encodeURIComponent(filePath)}?ref=${encodeURIComponent(commitSha)}`;
+//   const url =
+//     `${GITLAB_API}/projects/${encodeURIComponent(projectId)}/repository/files/${encodeURIComponent(filePath)}?ref=${encodeURIComponent(commitSha)}`;
 
-  const res = await fetch(url, { headers: authHeaders() });
+//   const res = await fetch(url, { headers: authHeaders() });
 
-  if (!res.ok) {
-    if (res.status === 404) return null; // file doesn't exist in this commit
+//   if (!res.ok) {
+//     if (res.status === 404) return null; // file doesn't exist in this commit
     
-    const text = await res.text().catch(() => '');
-    throw new Error(`Failed to fetch file: ${filePath} @ ${commitSha} (${res.status}) ${text}`);
-  }
+//     const text = await res.text().catch(() => '');
+//     throw new Error(`Failed to fetch file: ${filePath} @ ${commitSha} (${res.status}) ${text}`);
+//   }
 
-  const json = await res.json();
-  if (!json || !json.content) return null;
+//   const json = await res.json();
+//   if (!json || !json.content) return null;
 
-  // GitLab returns base64-encoded content
-  const buff = Buffer.from(json.content, 'base64');
-  return buff.toString('utf8');
-}
+//   // GitLab returns base64-encoded content
+//   const buff = Buffer.from(json.content, 'base64');
+//   return buff.toString('utf8');
+// }
 
 /**
  * List directory contents (used for scanning /src, config folders, etc.)
@@ -171,8 +171,5 @@ module.exports = {
   createIssue,
   searchOpenIssues,
   createIssueComment,
-
-  // NEW exports
-  getFileAtCommit,
   getRepositoryTree
 };

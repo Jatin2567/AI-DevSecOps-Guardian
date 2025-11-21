@@ -22,12 +22,12 @@ const MONITORED_STAGES_NAMES = (process.env.MONITORED_STAGES || 'unit_tests,lint
   .split(',')
   .map(s => s.trim())
   .filter(Boolean);
-// whether to analyze successful jobs/pipelines (string '1' means enabled)
-const ENABLE_SUCCESS_PIPELINE_ANALYSIS = String(process.env.ENABLE_SUCCESS_PIPELINE_ANALYSIS || '0') === '1';
+// // whether to analyze successful jobs/pipelines (string '1' means enabled)
+// const ENABLE_SUCCESS_PIPELINE_ANALYSIS = String(process.env.ENABLE_SUCCESS_PIPELINE_ANALYSIS || '0') === '1';
 
-// sample 1 in N successful runs (integer >=0). If 0 => analyze no successes. If 1 => analyze every success.
-const rawSampling = process.env.ANALYZE_SUCCESS_SAMPLING;
-const ANALYZE_SUCCESS_SAMPLING = rawSampling === undefined ? 1 : Math.max(0, parseInt(rawSampling || '0', 10));
+// // sample 1 in N successful runs (integer >=0). If 0 => analyze no successes. If 1 => analyze every success.
+// const rawSampling = process.env.ANALYZE_SUCCESS_SAMPLING;
+// const ANALYZE_SUCCESS_SAMPLING = rawSampling === undefined ? 1 : Math.max(0, parseInt(rawSampling || '0', 10));
 
 /** Validate incoming webhook token using timingSafeEqual */
 function validWebhookToken(incoming) {
@@ -43,15 +43,15 @@ function validWebhookToken(incoming) {
   }
 }
 
-/** Decide whether to analyze a successful event based on sampling config */
-function shouldSampleSuccess() {
-  if (!ENABLE_SUCCESS_PIPELINE_ANALYSIS) return false; // global off
-  // If sampling explicitly set to 0, treat it as "no successes sampled"
-  if (ANALYZE_SUCCESS_SAMPLING === 0) return false;
-  if (ANALYZE_SUCCESS_SAMPLING <= 1) return true; // analyze every successful job
-  // random sampling: approximate 1 in N
-  return (Math.floor(Math.random() * ANALYZE_SUCCESS_SAMPLING) === 0);
-}
+// /** Decide whether to analyze a successful event based on sampling config */
+// function shouldSampleSuccess() {
+//   if (!ENABLE_SUCCESS_PIPELINE_ANALYSIS) return false; // global off
+//   // If sampling explicitly set to 0, treat it as "no successes sampled"
+//   if (ANALYZE_SUCCESS_SAMPLING === 0) return false;
+//   if (ANALYZE_SUCCESS_SAMPLING <= 1) return true; // analyze every successful job
+//   // random sampling: approximate 1 in N
+//   return (Math.floor(Math.random() * ANALYZE_SUCCESS_SAMPLING) === 0);
+// }
 
 /** Helper: canonicalize job name */
 function canonicalJobName(job) {
@@ -93,6 +93,13 @@ function extractIds(event) {
 /** Analyze a single job (used by job event flow and pipeline loops) */
 async function analyzeSingleJob(eventContext) {
   const { event, projectId, pipelineId, job, jobName, commitSha } = eventContext;
+  console.log('[ANALYZE] Start', {
+    projectId,
+    pipelineId,
+    jobId: job && (job.id || job.build_id || job.job_id),
+    jobName,
+    commitSha
+  });
 
   // Use event.build_id first when calling getJobTrace to preserve existing semantics
   const buildIdParam = event && (event.build_id || null);
@@ -156,6 +163,13 @@ async function analyzeSingleJob(eventContext) {
       commitSha,
       traceTail
     });
+    console.log('[DETECTOR] Completed', {
+      projectId,
+      pipelineId,
+      jobId: (event && event.build_id) || (job && job.id) || null,
+      repoHits: (detectorResult.repoHits || []).length,
+      dependencyHigh: (detectorResult.dependencyHigh || []).length
+    });
     // store part of detector result to run debug file for audit
     try {
       const existing = JSON.parse(fs.readFileSync(runDebugPath, 'utf8'));
@@ -169,60 +183,153 @@ async function analyzeSingleJob(eventContext) {
     detectorResult = { repoHits: [], dependencyHigh: [], dependencyOther: [], error: e && e.message ? e.message : String(e) };
   }
 
-  // Deterministic findings: secrets/dependencies
-  if (Array.isArray(detectorResult.repoHits) && detectorResult.repoHits.some(h => h.verified)) {
-    const verifiedHits = detectorResult.repoHits.filter(h => h.verified);
-    const analysis = {
-      stage: jobName || job.name || job.stage || 'unknown',
-      root_cause: 'HARD_CODED_SECRET',
-      suggested_fix: 'Remove hardcoded secrets from repository, rotate affected credentials, and use a secrets manager. See attached artifact for verified occurrences.',
-      confidence: 0.99,
-      explain: `Detected ${verifiedHits.length} verified hardcoded secret(s) in repository files at commit ${commitSha || 'unknown'}.`
-    };
-    const issue = await issueService.createIssueFromAnalysis(projectId, {
-      pipelineId,
-      job,
-      analysis,
-      logExcerpt: excerpt,
-      commitSha
-    });
-    return { status: 'issue_created', reason: 'hardcoded_secret', issue };
-  }
+  // // Deterministic findings: secrets/dependencies
+  // if (Array.isArray(detectorResult.repoHits) && detectorResult.repoHits.some(h => h.verified)) {
+  //   const verifiedHits = detectorResult.repoHits.filter(h => h.verified);
+  //   const analysis = {
+  //     stage: jobName || job.name || job.stage || 'unknown',
+  //     root_cause: 'HARD_CODED_SECRET',
+  //     suggested_fix: 'Remove hardcoded secrets from repository, rotate affected credentials, and use a secrets manager. See attached artifact for verified occurrences.',
+  //     confidence: 0.99,
+  //     explain: `Detected ${verifiedHits.length} verified hardcoded secret(s) in repository files at commit ${commitSha || 'unknown'}.`
+  //   };
+  //   const issue = await issueService.createIssueFromAnalysis(projectId, {
+  //     pipelineId,
+  //     job,
+  //     analysis,
+  //     logExcerpt: excerpt,
+  //     commitSha
+  //   });
+  //   return { status: 'issue_created', reason: 'hardcoded_secret', issue };
+  // }
 
-  if (Array.isArray(detectorResult.dependencyHigh) && detectorResult.dependencyHigh.length > 0) {
-    const highDeps = detectorResult.dependencyHigh;
-    const pkgList = highDeps.map(d => `${d.package}@${d.installed_version || 'unknown'}`).join(', ');
-    const analysis = {
-      stage: jobName || job.name || job.stage || 'unknown',
-      root_cause: 'DEPENDENCY_VULNERABILITY',
-      suggested_fix: `Upgrade affected packages: ${pkgList}. Refer to advisories included in detector findings.`,
-      confidence: 0.95,
-      explain: `Detected ${highDeps.length} high/critical dependency vulnerability(ies).`
-    };
-    const issue = await issueService.createIssueFromAnalysis(projectId, {
-      pipelineId,
-      job,
-      analysis,
-      logExcerpt: excerpt,
-      commitSha
-    });
-    return { status: 'issue_created', reason: 'dependency_high', issue };
-  }
+  // if (Array.isArray(detectorResult.dependencyHigh) && detectorResult.dependencyHigh.length > 0) {
+  //   const highDeps = detectorResult.dependencyHigh;
+  //   const pkgList = highDeps.map(d => `${d.package}@${d.installed_version || 'unknown'}`).join(', ');
+  //   const analysis = {
+  //     stage: jobName || job.name || job.stage || 'unknown',
+  //     root_cause: 'DEPENDENCY_VULNERABILITY',
+  //     suggested_fix: `Upgrade affected packages: ${pkgList}. Refer to advisories included in detector findings.`,
+  //     confidence: 0.95,
+  //     explain: `Detected ${highDeps.length} high/critical dependency vulnerability(ies).`
+  //   };
+  //   const issue = await issueService.createIssueFromAnalysis(projectId, {
+  //     pipelineId,
+  //     job,
+  //     analysis,
+  //     logExcerpt: excerpt,
+  //     commitSha
+  //   });
+  //   return { status: 'issue_created', reason: 'dependency_high', issue };
+  // }
+  const jobStatus = (event.build_status|| '').toLowerCase();
+  // === AI invocation logic for SUCCESS jobs (conditionally) ===
+  // If job succeeded, scan logs for suspicious patterns/warnings
+  if (jobStatus === 'success' || jobStatus === 'running') {
+    // START: AI-on-success conditions block ----
+    // Patterns and threshold for 'suspicious' successful jobs
+    const suspiciousPatterns = [
+      /flaky/i,
+      /deprecation warning/i,
+      /deprecated/i,
+      /out of memory/i,
+      /memory leak/i,
+      /retrying/i,
+      /could not resolve dependency/i,
+      /npm WARN/i,
+      /disk quota/i,
+      /no space left on device/i,
+      /rate limit/i,
+      /429/i,
+      /throttled/i,
+      /skipped/i,
+      /quarantined/i,
+      /pending/i,
+      /build succeeded with warnings/i
+    ];
 
-  // Enforce: Only call AI for failed jobs!
-  const jobStatus = (job && (job.status || job.state || '') || (event && (event.status || event.state || ''))).toLowerCase();
-  if (jobStatus === 'success') {
-    return { status: 'skipped', reason: 'success-no-deterministic-findings' };
+    const matched = suspiciousPatterns.some(pattern => pattern.test(traceTail));
+    const warningCount = (traceTail.match(/warn/gi) || []).length;
+
+    if (matched || warningCount > 2) {
+      // If any suspicious pattern or many warnings, call AI (same as for failed jobs)
+      console.log('[AI GUARD] Success job triggers AI', {
+        projectId,
+        pipelineId,
+        jobId: (event && event.build_id) || (job && job.id) || null,
+        warningCount,
+        matchedPattern: matched
+      });
+      let analysis = null;
+      try {
+        analysis = await aiService.analyzeFailure({
+          projectId,
+          pipelineId,
+          jobId: (event && event.build_id) || (job && job.id) || null,
+          jobName: jobName || job.name,
+          logs: traceTail
+        });
+        analysis._detectorSummary = { repoHits: detectorResult.repoHits || [], dependencyHigh: detectorResult.dependencyHigh || [], dependencyOther: detectorResult.dependencyOther || [] };
+        try {
+          const existing = JSON.parse(fs.readFileSync(runDebugPath, 'utf8'));
+          existing.ai = { analysis: analysis };
+          fs.writeFileSync(runDebugPath, JSON.stringify(existing, null, 2), 'utf8');
+        } catch (e) {}
+      } catch (err) {
+        console.error('AI analyze failure:', err && err.message ? err.message : String(err));
+        analysis = {
+          stage: jobName || job.name,
+          root_cause: 'AI_UNAVAILABLE',
+          suggested_fix: 'Manual triage required',
+          confidence: 0,
+          explain: err && err.message ? err.message : String(err)
+        };
+      }
+      // Create or append to issue (dedupe inside service)
+      try {
+        const issue = await issueService.createIssueFromAnalysis(projectId, {
+          pipelineId,
+          job,
+          analysis,
+          logExcerpt: excerpt,
+          commitSha
+        });
+        console.log('[ISSUE] Created for success job', {
+          projectId,
+          pipelineId,
+          jobId: (event && event.build_id) || (job && job.id) || null,
+          issueId: issue && issue.iid
+        });
+        return { status: 'issue_created_ai_success', issue, analysis };
+      } catch (err) {
+        console.error('Failed to create/append issue (AI path - success):', err && err.message ? err.message : String(err));
+        return { status: 'failed', reason: 'issue_creation_failed_success', error: err && err.message ? err.message : String(err) };
+      }
+    }
+    // END: AI-on-success conditions block
+    console.log('[ANALYZE] Success job skipped (no suspicious signals)', {
+      projectId,
+      pipelineId,
+      jobId: (event && event.build_id) || (job && job.id) || null,
+      warningCount
+    });
+    return { status: 'skipped', reason: 'success-no-deterministic-findings-or-ai-triggers' };
   }
 
   // Double guard: Only failed jobs (not success, not any other case)
   if (jobStatus !== 'failed' && jobStatus !== 'canceled' && jobStatus !== 'manual') {
     // If job status can't be identified as failure, do not call AI
+    console.log('[ANALYZE] Job skipped (non failure state)', {
+      projectId,
+      pipelineId,
+      jobId: (event && event.build_id) || (job && job.id) || null,
+      jobStatus
+    });
     return { status: 'skipped', reason: `job-status-${jobStatus}-not-failure` };
   }
 
   // === ONLY HERE: AI called ===
-  console.log('[AI GUARD] Calling AI for failed job:', { projectId, pipelineId, jobId: (event && event.build_id) || (job && job.id) || null, jobStatus });
+  console.log('[AI GUARD] Failure job triggers AI', { projectId, pipelineId, jobId: (event && event.build_id) || (job && job.id) || null, jobStatus });
   let analysis = null;
   try {
     analysis = await aiService.analyzeFailure({
@@ -263,6 +370,12 @@ async function analyzeSingleJob(eventContext) {
       analysis,
       logExcerpt: excerpt,
       commitSha
+    });
+    console.log('[ISSUE] Created for failed job', {
+      projectId,
+      pipelineId,
+      jobId: (event && event.build_id) || (job && job.id) || null,
+      issueId: issue && issue.iid
     });
     return { status: 'issue_created_ai', issue, analysis };
   } catch (err) {
@@ -341,21 +454,21 @@ router.post('/', async (req, res) => {
         return res.status(200).json({ ok: true, msg: 'pipeline-failed-analyzed' });
       }
 
-      // If pipeline succeeded and analysis of successes is enabled: sample or analyze candidate monitored jobs
-      if (status === 'success' && ENABLE_SUCCESS_PIPELINE_ANALYSIS && shouldSampleSuccess()) {
-        const jobs = await gitlabService.getPipelineJobs(projectId, pipelineId);
-        const candidateJobs = jobs.filter(j => MONITORED_JOB_NAMES.includes(j.name));
-        for (const job of candidateJobs) {
-          try {
-            const ctx = { event, projectId, pipelineId, job, jobName: job.name, commitSha: event.checkout_sha || '' };
-            await analyzeSingleJob(ctx);
-          } catch (err) {
-            console.error('Failed to analyze a job (pipeline success sampling):', err && err.message ? err.message : String(err));
-            // continue with others
-          }
-        }
-        return res.status(200).json({ ok: true, msg: 'pipeline-success-sampled' });
-      }
+      // // If pipeline succeeded and analysis of successes is enabled: sample or analyze candidate monitored jobs
+      // if (status === 'success' && ENABLE_SUCCESS_PIPELINE_ANALYSIS && shouldSampleSuccess()) {
+      //   const jobs = await gitlabService.getPipelineJobs(projectId, pipelineId);
+      //   const candidateJobs = jobs.filter(j => MONITORED_JOB_NAMES.includes(j.name));
+      //   for (const job of candidateJobs) {
+      //     try {
+      //       const ctx = { event, projectId, pipelineId, job, jobName: job.name, commitSha: event.checkout_sha || '' };
+      //       await analyzeSingleJob(ctx);
+      //     } catch (err) {
+      //       console.error('Failed to analyze a job (pipeline success sampling):', err && err.message ? err.message : String(err));
+      //       // continue with others
+      //     }
+      //   }
+      //   return res.status(200).json({ ok: true, msg: 'pipeline-success-sampled' });
+      // }
 
       // default: ignore non-failed pipelines unless sampling enabled
       return res.status(200).json({ ok: true, msg: 'pipeline-ignored' });

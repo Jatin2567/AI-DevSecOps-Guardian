@@ -159,7 +159,13 @@ async function createIssueFromAnalysis(projectId, { pipelineId, job, analysis, l
   }
 
   // Build title/body (reuse your original format but annotate verification metadata)
-  const title = `[AUTO] CI analysis — ${job.name} (pipeline ${pipelineId}) [fp:${fingerprint}]`;
+  const statusLabel = deterministicVerified
+    ? 'VERIFIED'
+    : aiClaimVerified
+    ? 'AI-VERIFIED'
+    : (analysis.stage || job.name || 'CI');
+  const shortRoot = (analysis.root_cause || 'Unknown').replace(/[^a-z0-9 ]/gi, '').slice(0, 60) || 'Insight';
+  const title = `🚨 ${statusLabel} | ${shortRoot} | ${job.name} | Pipeline ${pipelineId}`;
   const jobUrl = job.web_url || `${GITLAB_BASE_URL}/${projectId}/-/jobs/${job.id}`;
   const pipelineUrl = `${GITLAB_BASE_URL}/${projectId}/-/pipelines/${pipelineId}`;
 
