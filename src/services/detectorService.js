@@ -262,15 +262,35 @@ async function loadAndVerifyArtifacts(opts = {}) {
 
   // 2) fetch each candidate file content at commitSha
   const fetchedFiles = {}; // filePath -> content
+  let fetchAttempts = [];
   for (const filePath of uniqCandidates) {
     try {
       const content = await fetchFileAtCommit(projectId, filePath, commitSha);
       fetchedFiles[filePath] = content;
       result.metadata.files_fetched.push(filePath);
+      fetchAttempts.push({ filePath, status: 'fetched' });
     } catch (e) {
-      // ignore fetch errors; file may not exist in repo or path not normalized
-      // but keep trying other files
+      fetchAttempts.push({ filePath, status: 'failed', error: e && e.message ? e.message : String(e) });
     }
+  }
+
+  // Console warn if no files fetched (and all failed)
+  if (Object.keys(fetchedFiles).length === 0) {
+    // Show candidate file URLs for diagnosis
+    console.warn('[detectorService] No files could be fetched for projectId:', projectId, 'commitSha:', commitSha, 'Candidates:', uniqCandidates);
+    fetchAttempts.forEach(attempt => {
+      if (attempt.status === 'failed') {
+        // Build likely attempted URL
+        const encodedPath = encodeURIComponent(attempt.filePath);
+        const refQs = commitSha ? `?ref=${encodeURIComponent(commitSha)}` : '';
+        const url = `${GITLAB_API}/projects/${encodeURIComponent(projectId)}/repository/files/${encodedPath}/raw${refQs}`;
+        console.warn('File fetch failed:', attempt.filePath, 'URL:', url, 'ERROR:', attempt.error);
+        // Additional tip for 404 or bad path
+        if (attempt.error && attempt.error.includes('404')) {
+          console.warn('[detectorService] 404 error likely means file does not exist at specified commit or the path is incorrect/encoded improperly.');
+        }
+      }
+    });
   }
 
   // 3) run secret detection on fetched files
