@@ -364,7 +364,7 @@ async function analyzeSingleJob(eventContext) {
 
   // Create or append to issue (dedupe done inside service) — AI path
   try {
-    const issue = await issueService.createIssueFromAnalysis(projectId, {
+    const issue = await issueService.createIssueFromAnalysis(event , projectId, {
       pipelineId,
       job,
       analysis,

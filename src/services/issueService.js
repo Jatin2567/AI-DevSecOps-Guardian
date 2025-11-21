@@ -2,7 +2,7 @@
 const gitlab = require('./gitlabService');
 const { makeFingerprint, normStr, isValidAnalysis } = require('../utils/aiHelpers');
 const fpStore = require('../db/fingerprintStore');
-
+const event = require('../routes/webhook');
 const MIN_CONF_TO_AUTOCREATE = Number(process.env.MIN_CONF_CREATE || 0.6);
 const GITLAB_BASE_URL = process.env.GITLAB_BASE_URL || 'https://gitlab.com';
 
@@ -48,12 +48,12 @@ async function verifyFileClaim({ projectId, filePath, line, match, commitSha }) 
   }
 }
 
-async function createIssueFromAnalysis(projectId, { pipelineId, job, analysis, logExcerpt = '', commitSha = '' }) {
+async function createIssueFromAnalysis(event , projectId, { pipelineId, job, analysis, logExcerpt = '', commitSha = '' }) {
   // Ensure fingerprint store ready (assumes init called elsewhere)
   const excerptSlice = normStr(logExcerpt).slice(0, 200);
   const fingerprint = makeFingerprint({
     projectId,
-    jobId: job && job.id ? job.id : (job && job.build_id ? job.build_id : ''),
+    jobId: event.build_id,
     pipelineId,
     commitSha,
     excerpt: excerptSlice
@@ -157,15 +157,15 @@ async function createIssueFromAnalysis(projectId, { pipelineId, job, analysis, l
       labels.push('ai:unverified');
     }
   }
-
+  console.log("event.build_name : " , event.build_name);
   // Build title/body (reuse your original format but annotate verification metadata)
   const statusLabel = deterministicVerified
     ? 'VERIFIED'
     : aiClaimVerified
     ? 'AI-VERIFIED'
-    : (analysis.stage || job.name || 'CI');
+    : (analysis.stage || event.build_name || 'CI');
   const shortRoot = (analysis.root_cause || 'Unknown').replace(/[^a-z0-9 ]/gi, '').slice(0, 60) || 'Insight';
-  const title = `🚨 ${statusLabel} | ${shortRoot} | ${job.name} | Pipeline ${pipelineId}`;
+  const title = `🚨 ${statusLabel} | ${shortRoot} | ${event.build_name} | Pipeline ${pipelineId}`;
   const jobUrl = job.web_url || `${GITLAB_BASE_URL}/${projectId}/-/jobs/${job.id}`;
   const pipelineUrl = `${GITLAB_BASE_URL}/${projectId}/-/pipelines/${pipelineId}`;
 
