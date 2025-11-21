@@ -283,7 +283,7 @@ async function loadAndVerifyArtifacts(opts = {}) {
         // Build likely attempted URL
         const encodedPath = encodeURIComponent(attempt.filePath);
         const refQs = commitSha ? `?ref=${encodeURIComponent(commitSha)}` : '';
-        const url = `${GITLAB_API}/projects/${encodeURIComponent(projectId)}/repository/files/${encodedPath}/raw${refQs}`;
+        const url = `${GITLAB_API}/projects/${encodeURIComponent(projectId)}/repository/files/${encodedPath}${refQs}`;
         console.warn('File fetch failed:', attempt.filePath, 'URL:', url, 'ERROR:', attempt.error);
         // Additional tip for 404 or bad path
         if (attempt.error && attempt.error.includes('404')) {
