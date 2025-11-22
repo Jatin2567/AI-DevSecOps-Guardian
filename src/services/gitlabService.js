@@ -16,9 +16,7 @@ function authHeaders(extra = {}) {
   };
 }
 
-/**
- * Fetch all jobs of a pipeline (unchanged).
- */
+
 async function getPipelineJobs(projectId, pipelineId) {
   const perPage = 100;
   let page = 1;
@@ -116,41 +114,6 @@ async function searchOpenIssues(projectId, search) {
   return res.json();
 }
 
-/* ========================================================================
- * NEW — required for secret detection & dependency detection
- * ===================================================================== */
-
-/**
- * Fetch a repository file **at a specific commit**.
- *
- * Raw content is returned as string.
-//  */
-// async function getFileAtCommit(projectId, filePath, commitSha) {
-//   if (!filePath || !commitSha) return null;
-
-//   const url =
-//     `${GITLAB_API}/projects/${encodeURIComponent(projectId)}/repository/files/${encodeURIComponent(filePath)}?ref=${encodeURIComponent(commitSha)}`;
-
-//   const res = await fetch(url, { headers: authHeaders() });
-
-//   if (!res.ok) {
-//     if (res.status === 404) return null; // file doesn't exist in this commit
-    
-//     const text = await res.text().catch(() => '');
-//     throw new Error(`Failed to fetch file: ${filePath} @ ${commitSha} (${res.status}) ${text}`);
-//   }
-
-//   const json = await res.json();
-//   if (!json || !json.content) return null;
-
-//   // GitLab returns base64-encoded content
-//   const buff = Buffer.from(json.content, 'base64');
-//   return buff.toString('utf8');
-// }
-
-/**
- * List directory contents (used for scanning /src, config folders, etc.)
- */
 async function getRepositoryTree(projectId, path = '', ref) {
   const url =
     `${GITLAB_API}/projects/${encodeURIComponent(projectId)}/repository/tree?path=${encodeURIComponent(path)}&ref=${encodeURIComponent(ref)}&per_page=100`;

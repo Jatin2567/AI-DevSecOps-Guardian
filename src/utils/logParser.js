@@ -1,12 +1,6 @@
 // backend/src/utils/logParser.js
 const crypto = require('crypto');
 
-/**
- * Sanitize logs aggressively:
- * - redact secrets / tokens
- * - redact PEM blocks
- * - prevent leaking into GitLab issues
- */
 function sanitize(raw) {
   if (!raw) return '';
   let s = String(raw);
@@ -57,9 +51,6 @@ function sanitize(raw) {
   return s;
 }
 
-/**
- * NEW: Return sanitized tail of trace (default last 150 lines)
- */
 function tailAndSanitize(raw, tailLines = 150) {
   if (!raw) return '';
   const arr = String(raw).split('\n');
@@ -67,9 +58,7 @@ function tailAndSanitize(raw, tailLines = 150) {
   return sanitize(tail);
 }
 
-/**
- * NEW: Compute short hash of sanitized content (first 2000 chars)
- */
+
 function traceHash(raw) {
   if (!raw) return '';
   const clean = sanitize(raw).slice(0, 2000);
@@ -78,7 +67,6 @@ function traceHash(raw) {
   return h.digest('hex').slice(0, 12); // short hash
 }
 
-// Existing exports preserved exactly
 module.exports = {
   sanitize,
 

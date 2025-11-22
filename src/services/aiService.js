@@ -1,21 +1,3 @@
-// backend/src/services/aiService.js
-// Groq-only AI service for CI log analysis (drop-in).
-// Requires: npm install groq-sdk
-//
-// Exports:
-//   async function analyzeFailure({ projectId, pipelineId, jobId, jobName, logs }, opts = {})
-//     -> returns { stage, root_cause, suggested_fix, confidence, explain }
-//
-// Environment variables:
-//   GROQ_API_KEY            (required)
-//   GROQ_MODEL              (optional, default: 'llama3-8b-8192')
-//   GROQ_MAX_RETRIES        (optional, default: 3)
-//   GROQ_TIMEOUT_MS         (optional, default: 30000)
-//   GROQ_BASE_BACKOFF_MS    (optional, default: 400)
-//   GROQ_MAX_BACKOFF_MS     (optional, default: 8000)
-//   GROQ_CONCURRENCY_LIMIT  (optional, default: 4)
-//   DEMO_FALLBACK           (optional, '1' to enable demo fallback when AI unavailable)
-
 'use strict';
 
 const util = require('util');
@@ -61,7 +43,7 @@ const waitForSlot = () => new Promise(resolve => {
 });
 const releaseSlot = () => { currentConcurrency = Math.max(0, currentConcurrency - 1); };
 
-// instantiate Groq client
+
 const client = new Groq({ apiKey: API_KEY });
 
 /**
@@ -109,7 +91,6 @@ Here is the evidence (if any). Only use verified items listed here:
     evText += '\n\n';
   }
 
-  // Use the tail of logs (last maxLines lines)
   const safelyTruncated = (String(logs || '')).split('\n').slice(-maxLines).join('\n');
 
   const footer =
@@ -118,7 +99,7 @@ Here is the evidence (if any). Only use verified items listed here:
   return `${header}${evText}${footer}${safelyTruncated}\n\nReturn only JSON that strictly conforms to the schema above.`;
 }
 
-// Defensive extraction from various SDK response shapes
+
 function extractTextFromResponse(resp) {
   try {
     if (!resp) return '';
@@ -142,7 +123,7 @@ function extractTextFromResponse(resp) {
   }
 }
 
-// Try parse strict JSON, else extract first {...} block
+
 function parseJsonFromText(text) {
   const cleaned = (typeof text === 'string') ? text.replace(/```/g, '').trim() : String(text || '');
   try {
@@ -193,7 +174,7 @@ async function callGroq(prompt) {
   throw lastErr || new Error('Groq client did not expose a known chat completion method');
 }
 
-// Process raw SDK response -> parsed analysis or fallback object
+
 function processGroqResponse(rawResp, { jobName = 'unknown', jobId = 'unknown' } = {}) {
   try {
     console.debug(JSON.stringify({ level: 'debug', msg: 'groq.raw_response', resp: safeTruncate(rawResp, 2000) }));
@@ -218,11 +199,7 @@ function processGroqResponse(rawResp, { jobName = 'unknown', jobId = 'unknown' }
   };
 }
 
-/**
- * Public analyzeFailure
- * Input: { projectId, pipelineId, jobId, jobName, logs }, opts = { evidence }
- * Output: { stage, root_cause, suggested_fix, confidence, explain }
- */
+
 async function analyzeFailure({ projectId, pipelineId, jobId, jobName, logs }, opts = {}) {
   await waitForSlot();
   try {

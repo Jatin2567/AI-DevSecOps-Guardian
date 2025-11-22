@@ -1,27 +1,20 @@
 // backend/src/utils/aiHelpers.js
 const crypto = require('crypto');
 
-/**
- * Clamp AI-reported confidence to [0,1]
- */
+
 function clampConfidence(v) {
   const n = Number(v);
   if (Number.isFinite(n)) return Math.max(0, Math.min(1, n));
   return 0;
 }
 
-/**
- * Normalize string: trim + squeeze whitespace
- */
+
 function normStr(s) {
   if (s === undefined || s === null) return '';
   return String(s).trim().replace(/\s+/g, ' ');
 }
 
-/**
- * Deterministic fingerprint for deduplication:
- * projectId : (pipelineId || jobId) : commitSha : logExcerpt
- */
+
 function makeFingerprint(
   { projectId, jobId, pipelineId = '', commitSha = '', excerpt = '' },
   { excerptSliceLength = 200, useHmac = true } = {}
@@ -47,10 +40,7 @@ function makeFingerprint(
   return h.digest('hex').slice(0, 12);
 }
 
-/**
- * Validate minimal AI analysis structure.
- * Extended: allow deterministic findings (with _detectorSummary) even if AI output is missing fields.
- */
+
 function isValidAnalysis(obj) {
   if (!obj || typeof obj !== 'object') return false;
 
@@ -64,10 +54,6 @@ function isValidAnalysis(obj) {
   return true;
 }
 
-/**
- * NEW: Produce a normalized summary for deterministic findings.
- * detectorResult = { repoHits: [...], dependencyHigh: [...] }
- */
 function buildDetectorSummary(detectorResult) {
   if (!detectorResult || typeof detectorResult !== 'object') return null;
 
@@ -94,10 +80,7 @@ function buildDetectorSummary(detectorResult) {
   return summary;
 }
 
-/**
- * NEW: Recognize deterministic (non-AI) findings.
- * Returns true if repoHits has any verified or if dependencyHigh exists.
- */
+
 function isDeterministicFinding(detectorSummary) {
   if (!detectorSummary) return false;
 
@@ -112,10 +95,7 @@ function isDeterministicFinding(detectorSummary) {
   return false;
 }
 
-/**
- * NEW: Create stable hash of file content/evidence.
- * Useful for verifying file-based AI claims.
- */
+
 function hashContent(str, slice = 200) {
   if (!str) return '';
   const h = crypto.createHash('sha256');

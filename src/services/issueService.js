@@ -6,14 +6,7 @@ const event = require('../routes/webhook');
 const MIN_CONF_TO_AUTOCREATE = Number(process.env.MIN_CONF_CREATE || 0.6);
 const GITLAB_BASE_URL = process.env.GITLAB_BASE_URL || 'https://gitlab.com';
 
-/**
- * Verify AI-provided file/line claim by fetching the file at commitSha and ensuring
- * the claimed snippet or at least the claimed line exists.
- *
- * analysis may contain fields like: analysis.file, analysis.line, analysis.match (optional)
- *
- * Returns { verified: boolean, reason?: string }
- */
+
 async function verifyFileClaim({ projectId, filePath, line, match, commitSha }) {
   if (!projectId || !filePath || !commitSha) {
     return { verified: false, reason: 'missing_parameters' };

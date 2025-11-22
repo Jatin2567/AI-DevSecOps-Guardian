@@ -6,9 +6,6 @@ const fpStore = require('./src/db/fingerprintStore');
 
 async function bootstrap() {
   try {
-    // ───────────────────────────────────────────────
-    // 1. Initialize fingerprint DB BEFORE app starts
-    // ───────────────────────────────────────────────
     await fpStore.init();
     console.log(JSON.stringify({
       level: 'info',
@@ -24,9 +21,7 @@ async function bootstrap() {
     process.exit(1); // fail fast
   }
 
-  // ───────────────────────────────────────────────
-  // 2. Start Express AFTER DB is ready
-  // ───────────────────────────────────────────────
+
   const app = express();
   app.use(bodyParser.json({ limit: '5mb' }));
 
@@ -37,9 +32,7 @@ async function bootstrap() {
   app.get('/health', (req, res) => res.status(200).json({ status: 'ok' }));
   app.get('/ready', (req, res) => res.status(200).json({ status: 'ready' }));
 
-  // ───────────────────────────────────────────────
-  // 3. Start HTTP server
-  // ───────────────────────────────────────────────
+
   const port = process.env.PORT || 3000;
   const server = app.listen(port, () => {
     console.log(JSON.stringify({
@@ -66,7 +59,5 @@ async function bootstrap() {
   process.on('SIGTERM', () => gracefulShutdown('SIGTERM'));
 }
 
-// ───────────────────────────────────────────────
 // Bootstrap the whole service
-// ───────────────────────────────────────────────
 bootstrap();

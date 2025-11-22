@@ -8,9 +8,6 @@ const crypto = require('crypto');
 
 const DEBUG_DIR = process.env.DEBUG_DIR || path.join(process.cwd(), 'debug');
 
-/**
- * Ensure debug directory exists (synchronous helper for early bootstrap)
- */
 function ensureDebugDirSync() {
   try {
     fssync.mkdirSync(DEBUG_DIR, { recursive: true });
@@ -19,9 +16,6 @@ function ensureDebugDirSync() {
   }
 }
 
-/**
- * Ensure debug directory exists (async)
- */
 async function ensureDebugDir() {
   try {
     await fs.mkdir(DEBUG_DIR, { recursive: true });
@@ -30,10 +24,7 @@ async function ensureDebugDir() {
   }
 }
 
-/**
- * Write a raw webhook payload JSON to debug directory.
- * Returns { path, hash } where hash is sha256 hex of the raw JSON.
- */
+
 async function writeRawWebhookPayload(event) {
   await ensureDebugDir();
   try {
@@ -54,12 +45,7 @@ async function writeRawWebhookPayload(event) {
   }
 }
 
-/**
- * Write a run snapshot for a traceHash.
- * data is an object; it'll be stringified.
- * If a file already exists, this will NOT overwrite unless replace=true.
- * Returns path.
- */
+
 async function writeRunSnapshot(traceHash, data = {}, replace = false) {
   await ensureDebugDir();
   const filename = path.join(DEBUG_DIR, `run-${traceHash}.json`);
@@ -82,11 +68,7 @@ async function writeRunSnapshot(traceHash, data = {}, replace = false) {
   }
 }
 
-/**
- * Append detector results into an existing run snapshot.
- * If run file doesn't exist, creates it.
- * detectorObj will be placed under "detector" key.
- */
+
 async function appendDetectorToRun(traceHash, detectorObj) {
   await ensureDebugDir();
   const filename = path.join(DEBUG_DIR, `run-${traceHash}.json`);
@@ -107,9 +89,7 @@ async function appendDetectorToRun(traceHash, detectorObj) {
   }
 }
 
-/**
- * Append AI analysis to run snapshot.
- */
+
 async function appendAiToRun(traceHash, aiObj) {
   await ensureDebugDir();
   const filename = path.join(DEBUG_DIR, `run-${traceHash}.json`);
@@ -130,10 +110,7 @@ async function appendAiToRun(traceHash, aiObj) {
   }
 }
 
-/**
- * Save arbitrary detector debug file (returns file path).
- * Useful to store detector-{hash}.json as in detectorService.
- */
+
 async function writeDetectorDebug(obj) {
   await ensureDebugDir();
   try {
@@ -152,10 +129,7 @@ async function writeDetectorDebug(obj) {
   }
 }
 
-/**
- * Read a debug file by filename (relative to debug dir).
- * Returns { content, path } or { error }.
- */
+
 async function readDebugFile(filename) {
   await ensureDebugDir();
   const filePath = path.join(DEBUG_DIR, filename);
@@ -167,9 +141,7 @@ async function readDebugFile(filename) {
   }
 }
 
-/**
- * List debug files (basic).
- */
+
 async function listDebugFiles() {
   await ensureDebugDir();
   try {

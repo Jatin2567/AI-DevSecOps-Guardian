@@ -3,5 +3,6 @@ node_modules
 dist
 build
 .DS_Store
-debug
-data
+debug/
+data/fingerprints.db
+Dockerfile
