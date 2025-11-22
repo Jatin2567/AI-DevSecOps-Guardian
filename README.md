@@ -30,20 +30,20 @@ GitLab → Webhook → Backend → (Failure? AI Diagnosis) / (Success? Keyword F
 ## Setup
 
 ### Environment Variables
-GITLAB_API_URL = <api_url>
-GITLAB_TOKEN = <token>
-PORT = <port>
-GITLAB_WEBHOOK_SECRET = <secret>
-MONITORED_JOB_NAMES= <job_names>
-MONITORED_STAGES= <job_stages>
-GITLAB_BASE_URL = <url>
-FP_DB_DIR = <desired_location>
-FP_DB_FILE = <desired_file_name>
-MIN_CONF_CREATE = <desired_value>
-AI_API_KEY= <api_key>   
-AI_MODEL= <desired_model>             
-AI_MAX_RETRIES= <desired_value>
-AI_TIMEOUT_MS= <desired_value>
+- GITLAB_API_URL = <api_url>
+- GITLAB_TOKEN = <token>
+- PORT = <port>
+- GITLAB_WEBHOOK_SECRET = <secret>
+- MONITORED_JOB_NAMES= <job_names>
+- MONITORED_STAGES= <job_stages>
+- GITLAB_BASE_URL = <url>
+- FP_DB_DIR = <desired_location>
+- FP_DB_FILE = <desired_file_name>
+- MIN_CONF_CREATE = <desired_value>
+- AI_API_KEY= <api_key>   
+- AI_MODEL= <desired_model>             
+- AI_MAX_RETRIES= <desired_value>
+- AI_TIMEOUT_MS= <desired_value>
 
 ### Install
 npm install
