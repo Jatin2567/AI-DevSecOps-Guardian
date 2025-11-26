@@ -1,69 +1,324 @@
-# AI-DevSecOps Guardian
-
+# **AI DevSecOps Guardian**
+<p align="center">
+  <img src= "https://github.com/Jatin2567/AI-DevSecOps-Guardian/blob/main/assets/logo.png" alt="AI DevSecOps Guardian Logo" width="200"/>
+</p>
 AI-DevSecOps Guardian is an intelligence layer for GitLab CI/CD that provides:
+
 - Automated AI-driven job failure diagnosis
 - Keyword-based risk detection on successful jobs
 - Built-in DevSecOps security controls
 
-## Features
+AI-powered observability, governance, and automated remediation framework for **GitLab CI/CD pipelines**.  
+This system functions as an autonomous sentinel — monitoring build failures, diagnosing root causes, enforcing security policies, and generating actionable insights without developer intervention.
 
-### 1. Automated Job Failure Diagnosis
-- Detects failed jobs via webhook
-- Fetches and sanitizes job trace
-- Uses AI to generate root-cause and fix recommendations
-- Auto-creates GitLab Issue
+---
 
-### 2. Keyword-Based Risk Detection
-- Scans successful job logs for keywords (warning, deprecated, oom, performance)
-- If matched → AI generates “soft alert”
-- Creates Issue/Insight only when risk is detected
+## 🚀 Overview
 
-### 3. DevSecOps Controls
-- Webhook token validation
-- Secret masking and trace sanitization
+AI DevSecOps Guardian integrates directly with GitLab through webhook events. It streamlines pipeline governance by:
+
+- Monitoring every pipeline and job event  
+- Detecting failures, anomalies, and deviations  
+- Automatically invoking AI to explain issues, recommend corrective actions, and support teams in real time  
+- Ensuring enhanced compliance, operational discipline, and faster resolution cycles  
+
+This leads to predictable delivery outcomes, enterprise-grade auditability, and measurable productivity uplift — essential for high-velocity engineering environments.
+
+---
+
+## ✨ Key Features
+
+### **1. Automated Failure Diagnostics**
+- Listens to job and pipeline webhooks  
+- When a job fails, the Guardian triggers an AI-driven root-cause analysis  
+- Provides remediation steps, context-specific insights, and recommended next actions  
+
+### **2. Smart Job Trace Retrieval**
+- Retrieves job trace logs securely via the GitLab API  
+- Automatically handles pipeline structure, job hierarchy, and event parsing  
+
+### **3. DevSecOps Controls**
+- Webhook token validation  
+- Secret masking and trace sanitization  
 - Audit logs
-- Least privilege GitLab token usage
+- Least privilege GitLab token usage  
 
-## Architecture
-GitLab → Webhook → Backend → (Failure? AI Diagnosis) / (Success? Keyword Filter → AI) → Issue Creation
+---
 
-## Setup
+## 🧩 System Architecture
 
-### Environment Variables
-- GITLAB_API_URL = <api_url>
-- GITLAB_TOKEN = <token>
-- PORT = <port>
-- GITLAB_WEBHOOK_SECRET = <secret>
-- MONITORED_JOB_NAMES= <job_names>
-- MONITORED_STAGES= <job_stages>
-- GITLAB_BASE_URL = <url>
-- FP_DB_DIR = <desired_location>
-- FP_DB_FILE = <desired_file_name>
-- MIN_CONF_CREATE = <desired_value>
-- AI_API_KEY= <api_key>   
-- AI_MODEL= <desired_model>             
-- AI_MAX_RETRIES= <desired_value>
-- AI_TIMEOUT_MS= <desired_value>
+### **Core Components**
 
-### Install
+- **Webhook Receiver (Node.js/Express)** — Captures GitLab events  
+- **Job Trace Manager** — Retrieves logs for failed jobs  
+- **AI Engine Connector** — Submits logs + metadata for diagnostic processing  
+- **Policy Engine** — Executes static and dynamic evaluation  
+- **Audit Logger** — Stores all events, decisions, and AI insights  
+
+---
+
+## 📁 Project Structure
+```txt
+AIDevSecOps-Guardian/
+├── debug/                  # will come after the code gets in runtime (logs information)
+├── node_modules/
+│──assets/
+│  └──logo.png
+│
+├── src/
+│ ├── db/
+│ │ └── fingerprintStore.js
+│ │
+│ ├── routes/
+│ │ └── webhook.js
+│ │
+│ ├── services/
+│ │ ├── aiService.js
+│ │ ├── debugStore.js
+│ │ ├── detectorService.js
+│ │ ├── gitlabService.js
+│ │ └── issueService.js
+│ │
+│ ├── tests/
+│ │ ├── gemini1.test.js
+│ │ ├── issueService.test.js
+│ │ └── logParser.test.js
+│ │
+│ └── utils/
+│ ├── aiHelpers.js
+│ ├── fetchWithRetries.js
+│ └── logParser.js
+│
+├── .env
+├── .eslintrc.json
+├── .gitignore    
+├── .nvmrc
+│
+├── LICENSE
+├── package-lock.json
+├── package.json
+├── README.md
+└── server.js
+```
+---
+
+## 🔐 Prerequisites
+
+- GitLab Project with Access  
+- Webhooks enabled  
+- Personal Access Token with API scope  
+- Node.js 18+  
+- Valid OpenAI / LLM API Key  
+
+---
+
+## ⚙️ Environment Setup
+
+### Create a `.env` file
+```txt
+PORT=3000  
+GITLAB_BASE_URL= <https://gitlab.com/api/v4 or any other if self hosted> 
+GITLAB_TOKEN=<your_personal_access_token> 
+GITLAB_API_URL = <api_url>
+GITLAB_WEBHOOK_SECRET = <secret>
+MONITORED_JOB_NAMES= <job_names>
+MONITORED_STAGES= <job_stages>
+FP_DB_DIR = <desired_location>
+FP_DB_FILE = <desired_file_name>
+MIN_CONF_CREATE = <desired_value>
+AI_API_KEY= <api_key>
+AI_MODEL= <desired_model>
+AI_MAX_RETRIES= <desired_value>
+AI_TIMEOUT_MS= <desired_value>
+```
+### Install dependencies
+
 npm install
 
-### Run
+### Run the server
+
 node server.js
 
-## Webhook Configuration
-Enable:
-- Pipeline Events
-- Job Events
+---
 
-Set secret token same as GITLAB_WEBHOOK_SECRET.
+## 🌐 GitLab Webhook Configuration
 
-## Output
-Creates structured GitLab Issues with:
-- Summary
-- Root cause
-- Fix steps
-- Keyword alerts (for success)
+1. Go to Project Settings → Webhooks  
+2. Add your server endpoint:  
+   https://<your-server-url>/webhook  
+3. Select events:  
+   - Pipeline events  
+   - Job events  
+4. Save.
 
-## License
-MIT
+---
+
+## 🧠 How the AI Flow Works
+
+1. GitLab triggers webhook for pipeline/job events  
+2. If a job fails, Guardian fetches the job trace  
+3. AI engine analyzes:  
+   - Failure cause  
+   - Error classification  
+   - Suggested solutions  
+   - Policy violations  
+4. Guardian returns:  
+   - Actionable summary  
+   - Recommended fixes  
+   - Logs stored in the Audit Trail  
+
+---
+
+## 📊 Example Insight Generated by the AI
+
+**Root Cause:**  
+Docker-in-Docker version mismatch triggered daemon startup failure.
+
+**Recommended Remediation:**  
+- Align DIND service and docker image versions  
+- Add explicit version tags to prevent regressions  
+
+**Sample Fix:**
+
+image: docker:23.0  
+services:  
+  - docker:23.0-dind
+
+---
+
+## 📘 Workflow Summary 
+
+### Pipeline Event Handling
+
+GitLab triggers a webhook whenever a pipeline or job is updated.  
+The backend receives the payload and extracts the following fields:
+
+- `projectId`
+- `pipelineId`
+- `jobId`
+- `jobStatus`
+- `stage`
+- `jobName`
+
+---
+
+#### 1. Smart Event Filtering
+
+- Events that are not job-related are discarded.  
+- If `jobId` is missing, the system logs the event and ignores it (no AI invocation).
+
+---
+
+#### 2. Job Trace Retrieval
+
+- The backend retrieves the job trace via the GitLab API.  
+- If the trace cannot be fetched, the failure is logged and processing is halted.
+
+---
+
+#### 3. Dual-Path Processing Logic
+
+##### **A. Failure Path — Job Failed**
+
+Triggered when:
+
+- `jobStatus == "failed"`
+
+Actions:
+
+- AI engine is invoked **once per failed job**.  
+- System sends job trace + metadata for full RCA:
+  - Root cause  
+  - Failure classification  
+  - Actionable remediation  
+- A GitLab Issue is automatically **created or updated** based on findings.
+
+---
+
+##### **B. Success Keyword Path — Job Succeeded but Trace Contains Signals**
+
+Triggered when:
+
+- `jobStatus == "success"` **AND**  
+- Job trace contains policy/quality/security indicators  
+  (e.g., `"warning"`, `"deprecated"`, `"license risk"`)
+
+Actions:
+
+- AI performs a lightweight analysis (no full RCA).  
+- Identifies risks, quality gaps, or soft violations detected **despite success**.  
+- System may add a **non-blocking GitLab Issue or Comment** when relevant.
+
+---
+
+#### 4. Audit Logging & Governance
+
+- Every action and AI decision is recorded in the audit trail.  
+- All outputs, remediations, and escalations remain fully traceable.  
+
+---
+#### Flowchart :
+```txt
+                   ┌───────────────────────┐
+                   │      GitLab CI/CD      │
+                   │ (Pipeline/Job Events)  │
+                   └───────────┬───────────┘
+                               │
+                               ▼
+                    ┌─────────────────────┐
+                    │  Webhook Receiver   │
+                    └───────┬────────────┘
+                            │ Validate Event
+                            ▼
+                 ┌────────────────────────────┐
+                 │   Smart Event Filter        │
+                 │ (Ignore non-job / no jobId) │
+                 └──────────┬─────────────────┘
+                            │
+                            ▼
+                 ┌──────────────────────────┐
+                 │  Fetch Job Trace (API)    │
+                 └──────┬───────────────────┘
+                        │
+                        ▼
+       ┌────────────────────────────────────────────┐
+       │     Decision Logic (Two Parallel Paths)     │
+       └───────────────────┬─────────────────────────┘
+                           │
+    ┌──────────────────────┴──────────────────────────────┐
+    │                                                     │
+┌───────────────┐                                 ┌──────────────────────────┐
+│  Failure Path │                                 │ Success Keyword Path    │
+│ (job failed)  │                                 │ (job success + keyword) │
+└──────┬────────┘                                 └─────────────┬───────────┘
+       │ AI call                                                │ AI call 
+       ▼                                                        ▼
+┌────────────────────┐                        ┌─────────────────────────┐
+│  Deep RCA + Fixes  │                        │  Warnings / Risks Note │
+└─────────┬──────────┘                        └───────────┬────────────┘
+          │                                               │
+          ▼                                               ▼
+          └─────────────────────┬─────────────────────────┘                         
+                                ▼                      
+                        ┌─────────────────┐
+                        │ Creates/Updates │ 
+                        │ Gitlab Issue    │
+                        └─────────────────┘
+
+```
+
+
+---
+
+## 🏆 Why This Project Stands Out
+
+- Enterprise-grade automation typically seen in advanced DevSecOps suites 
+- Significant reduction in MTTR  (mean time to recovery)
+- Boosts developer throughput by eliminating manual debugging  
+- Demonstrates strong synergy of AI, DevOps, and Security  
+
+---
+
+## 📜 License
+
+MIT License.
